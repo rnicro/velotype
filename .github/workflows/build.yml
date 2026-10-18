@@ -5,9 +5,16 @@ on:
     branches: [main]
     paths:
       - "srcpkgs/velotype/**"
-      - "scripts/prepare-source.sh"
-      - "scripts/publish-release.sh"
-      - ".github/workflows/build.yml"
+      - "scripts/**"
+      - ".github/workflows/**"
+      - "README.md"
+  pull_request:
+    branches: [main]
+    paths:
+      - "srcpkgs/velotype/**"
+      - "scripts/**"
+      - ".github/workflows/**"
+      - "README.md"
   workflow_dispatch:
 
 permissions:
@@ -23,7 +30,7 @@ env:
 
 jobs:
   build:
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     outputs:
       version: ${{ steps.source.outputs.version }}
       revision: ${{ steps.source.outputs.revision }}
@@ -125,9 +132,9 @@ jobs:
           bash -n srcpkgs/velotype/template
           bash -n scripts/prepare-source.sh
           bash -n scripts/publish-release.sh
-          bash -n scripts/test-xattr-patch.sh
+          bash -n scripts/test-wayland-patch.sh
           bash -n scripts/test-publish-release.sh
-          bash scripts/test-xattr-patch.sh
+          bash scripts/test-wayland-patch.sh
           bash scripts/test-publish-release.sh
           ./scripts/prepare-source.sh "void-packages/hostdir/sources/velotype-${{ steps.source.outputs.version }}"
           mkdir -p void-packages/srcpkgs/velotype
