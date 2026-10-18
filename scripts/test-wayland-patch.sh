@@ -137,7 +137,7 @@ if _velotype_assert_wayland_only >/dev/null 2>&1; then
 fi
 export CARGO_TEST_TREE="${tmp}/cargo-tree-good.txt"
 
-# Build flags should target Skylake and preserve runner-selected parallelism.
+# Build flags should target Skylake and use runner-aware parallelism.
 _velotype_set_build_env
 [[ "$CARGO_PROFILE_RELEASE_OPT_LEVEL" == 3 ]]
 [[ "$RUSTC_WRAPPER" == sccache ]]
@@ -146,8 +146,17 @@ _velotype_set_build_env
 [[ "$CARGO_BUILD_JOBS" -eq 6 ]]
 unset CARGO_BUILD_JOBS
 _velotype_set_build_env
-[[ -z "${CARGO_BUILD_JOBS+x}" ]] || {
-  echo "package recipe hard-coded a Cargo build-job limit" >&2
+expected_jobs="$(_velotype_calculate_cargo_jobs)"
+[[ "$CARGO_BUILD_JOBS" =~ ^[1-9][0-9]*$ ]] || {
+  echo "automatic Cargo parallelism did not produce a positive job count" >&2
+  exit 1
+}
+[[ "$CARGO_BUILD_JOBS" -eq "$expected_jobs" ]] || {
+  echo "Cargo parallelism did not match the CPU/memory-aware limit" >&2
+  exit 1
+}
+[[ "$CARGO_BUILD_JOBS" -le "$(nproc)" ]] || {
+  echo "Cargo parallelism exceeded the runner's available CPUs" >&2
   exit 1
 }
 export CARGO_BUILD_JOBS=6

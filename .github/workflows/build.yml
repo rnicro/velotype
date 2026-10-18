@@ -50,6 +50,18 @@ jobs:
             echo "Sufficient disk space available; skipping runner cleanup."
           fi
           df -h /
+          cpu_count="$(nproc)"
+          memory_kib="$(awk '$1 == "MemTotal:" { print $2; exit }' /proc/meminfo)"
+          free_disk_kib="$(df --output=avail -k / | tail -1 | tr -d ' ')"
+          {
+            echo "### GitHub-hosted build runner"
+            echo
+            echo "- Logical CPUs: $cpu_count"
+            echo "- Visible RAM: $((memory_kib / 1048576)) GiB"
+            echo "- Free disk after cleanup: $((free_disk_kib / 1048576)) GiB"
+            echo "- Cargo jobs: computed in the package recipe from effective CPU and memory limits"
+            echo "- Target CPU tuning: Intel Skylake (independent of the runner CPU)"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Checkout package repository
         uses: actions/checkout@v6

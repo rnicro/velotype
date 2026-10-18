@@ -14,7 +14,11 @@ The binary is specialized for the Intel Core i3-6100U (Skylake): C/C++ component
 
 ## Build host vs. target device
 
-Published packages are compiled on GitHub Actions, not on the target device. The target CPU/ISA, `x86_64-musl` ABI, and Wayland configuration define the resulting binary's compatibility and runtime behavior. The target's two physical CPU cores, 4 GB RAM, and HDD must not be used to cap CI compilation parallelism. Cargo and XBPS should use the build runner's available resources, with any limits justified by the runner's actual memory/CPU capacity or observed build failures.
+Published packages are compiled on GitHub Actions, not on the target device. The target CPU/ISA, `x86_64-musl` ABI, and Wayland configuration define the resulting binary's compatibility and runtime behavior. Do not limit the build to the target's two physical CPU cores, 4 GB RAM, or HDD.
+
+For this public repository, GitHub's standard `ubuntu-24.04` runner currently provides 4 logical CPUs, 16 GB RAM, and a 14 GB SSD (see [GitHub-hosted runner specifications](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories)). The workflow records runner capacity and frees unused preinstalled SDKs when disk space is tight. The package recipe computes Cargo parallelism inside the build environment from its effective CPU count and memory limit: it uses all available CPUs when memory allows, reserves 2 GiB for the OS/linker, and budgets approximately 3 GiB per parallel job. A valid explicit `CARGO_BUILD_JOBS` value can override this estimate. `XBPS_MAKEJOBS` also uses the runner's reported CPU count.
+
+The binary remains specialized for Intel Skylake; runner CPU tuning and target ISA selection are deliberately independent. The recipe keeps release opt-level 3, full LTO, one codegen unit, `panic=abort`, and symbol stripping, favouring final binary performance over the fastest possible compile. No runtime gain is claimed without target-device benchmarking.
 
 ## Wayland-only build
 

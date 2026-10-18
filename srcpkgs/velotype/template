@@ -91,6 +91,54 @@ _velotype_assert_wayland_only() {
 	rm -f -- "$tree_file"
 }
 
+# Honour the build runner's real resource limits, not the target device's
+# CPU count. A release link can spike memory, so reserve 2 GiB for the OS/linker
+# and budget up to 3 GiB per parallel Cargo job.
+_velotype_available_memory_kib() {
+	local memory_kib limit_bytes limit_kib
+	memory_kib="$(awk '$1 == "MemTotal:" { print $2; exit }' /proc/meminfo 2>/dev/null || true)"
+	case "$memory_kib" in
+		''|*[!0-9]*) memory_kib=0 ;;
+	esac
+
+	if [ -r /sys/fs/cgroup/memory.max ]; then
+		limit_bytes="$(cat /sys/fs/cgroup/memory.max)"
+	elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+		limit_bytes="$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)"
+	else
+		limit_bytes=
+	fi
+	case "$limit_bytes" in
+		''|max|*[!0-9]*) ;;
+		*)
+			limit_kib=$((limit_bytes / 1024))
+			if [ "$memory_kib" -eq 0 ] || [ "$limit_kib" -lt "$memory_kib" ]; then
+				memory_kib="$limit_kib"
+			fi
+			;;
+	esac
+	printf '%s\n' "$memory_kib"
+}
+
+_velotype_calculate_cargo_jobs() {
+	local cpu_count memory_kib memory_jobs
+	cpu_count="$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1')"
+	case "$cpu_count" in
+		''|*[!0-9]*|0) cpu_count=1 ;;
+	esac
+	memory_kib="$(_velotype_available_memory_kib)"
+	case "$memory_kib" in
+		''|*[!0-9]*|0) ;;
+		*)
+			memory_jobs=$(((memory_kib - 2097152) / 3145728))
+			[ "$memory_jobs" -ge 1 ] || memory_jobs=1
+			[ "$memory_jobs" -le "$cpu_count" ] || memory_jobs="$cpu_count"
+			cpu_count="$memory_jobs"
+			;;
+	esac
+	printf '%s\n' "$cpu_count"
+}
+
 _velotype_set_build_env() {
 	# Keep target tuning applied if install recompiles in a separate phase.
 	case " ${CFLAGS:-}" in
@@ -113,7 +161,22 @@ _velotype_set_build_env() {
 	export RUSTC_WRAPPER=sccache
 	export SCCACHE_DIR="${CARGO_HOME:-/host/cargo}/sccache"
 	export SCCACHE_CACHE_SIZE=2G
-	# Let Cargo select parallelism from the build runner's available CPU cores.
+
+	# Use all available runner CPUs unless memory is the tighter constraint.
+	# Respect an explicit positive CARGO_BUILD_JOBS override.
+	if [ -z "${CARGO_BUILD_JOBS:-}" ]; then
+		export CARGO_BUILD_JOBS="$(_velotype_calculate_cargo_jobs)" || return $?
+	fi
+	case "$CARGO_BUILD_JOBS" in
+		''|*[!0-9]*|0)
+			echo "velotype: CARGO_BUILD_JOBS must be a positive integer" >&2
+			return 1
+			;;
+	esac
+	printf 'velotype: Cargo parallelism: %s jobs; visible CPUs: %s; memory limit: %s MiB\\n' \
+		"$CARGO_BUILD_JOBS" \
+		"$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || printf 'unknown')" \
+		"$((_velotype_available_memory_kib / 1024))" >&2
 }
 
 do_build() {
