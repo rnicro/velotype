@@ -52,7 +52,7 @@ jobs:
           df -h /
 
       - name: Checkout package repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -74,7 +74,7 @@ jobs:
           echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
 
       - name: Checkout void-packages
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: void-linux/void-packages
           ref: master
@@ -219,7 +219,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout release helper
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
