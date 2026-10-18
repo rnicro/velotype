@@ -33,7 +33,7 @@ jobs:
           set -euo pipefail
           bash -n srcpkgs/velotype/template
           bash -n scripts/prepare-source.sh
-          bash -n scripts/test-xattr-patch.sh
+          bash -n scripts/test-wayland-patch.sh
           bash -n scripts/test-prepare-source.sh
           bash -n scripts/publish-release.sh
           bash -n scripts/test-publish-release.sh
@@ -41,8 +41,8 @@ jobs:
       - name: Test source checksum and cache behavior
         run: bash scripts/test-prepare-source.sh
 
-      - name: Test musl xattr patch lifecycle
-        run: bash scripts/test-xattr-patch.sh
+      - name: Test Wayland-only feature patch lifecycle
+        run: bash scripts/test-wayland-patch.sh
 
       - name: Test versioned release publication
         run: bash scripts/test-publish-release.sh

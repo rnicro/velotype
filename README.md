@@ -2,7 +2,11 @@
 
 Void Linux `x86_64-musl` package for [Velotype](https://github.com/manyougz/velotype), a native Rust/GPUI Markdown editor.
 
-This package pins Velotype `0.7.5` to upstream commit `a61c71955c6104fc5d647088b5957da6d59149ca`, and verifies the committed SHA-256 before building.
+This package pins Velotype `0.7.8` to upstream commit `07a24a9b5b953539dede8e61a1f7d9d0adbba590` and verifies the source archive SHA-256 (`75c190c578b8dda567a6eca8ed0ad1568cd714b7f90d1966e98b2141608a5d48`) before building.
+
+## Repository workflow
+
+Commit repository maintenance directly to the configured default branch (`main` currently; use `master` only if it is actually the default). Do not create feature branches or pull requests for routine package updates. Batch related edits into one commit to avoid redundant, cancelled CI builds. Before a release, verify the upstream commit and source SHA-256, run package-validation tests, and confirm the real `xbps-src` build succeeds; never treat a test-only run as a package-build pass.
 
 ## Target hardware
 
@@ -14,13 +18,13 @@ Published packages are compiled on GitHub Actions, not on the target device. The
 
 ## Wayland-only build
 
-The package explicitly disables GPUI's default features and enables its Wayland backend; X11 headers and client development libraries are not package dependencies. GPUI 0.2.2 also enables `xkbcommon/x11` explicitly and leaves `xkbcommon` default features enabled, which can reintroduce X11 even with GPUI's own X11 backend disabled. The package build removes the explicit X11 feature and disables `xkbcommon` defaults while preserving Wayland. It checks the normal/build Cargo feature graph for Wayland and rejects X11 features/crates, then checks the executable's direct ELF dependencies for X11 libraries.
+The package disables default features for upstream `gpui-pre-platform` 0.3.9 and enables only `font-kit`, `wayland`, and `runtime_shaders`. This is necessary because upstream's platform dependency enables both X11 and Wayland. Since this feature change alters the resolved dependency graph, the recipe refreshes only the exact `gpui-pre-platform@0.3.9` lockfile entry before the actual fetch/build steps use `--locked`; it does not run an unrestricted whole-project update. The package checks the normal/build Cargo feature graph for Wayland and rejects X11 features/crates, then checks the executable's direct ELF dependencies for X11 libraries.
 
 Vulkan, Mesa, Wayland, xkbcommon, fontconfig and freetype dependencies are retained because GPUI still needs the renderer, display protocol, keyboard handling and font/text stack. The binary remains tuned for Skylake, while Cargo/XBPS compilation parallelism is determined by the GitHub Actions build runner rather than the target device.
 
 ## Latest release
 
-Each successful package build from `main` publishes a GitHub Release whose tag and title are the upstream version only (for example, `0.7.5`). The release contains the native XBPS package as its only downloadable asset, using the version, package revision, and architecture in its filename: `velotype-0.7.5_2.x86_64-musl.xbps`.
+Each successful package build from `main` publishes a GitHub Release whose tag and title are the upstream version only (for example, `0.7.8`). The release contains the native XBPS package as its only downloadable asset, using the version, package revision, and architecture in its filename: `velotype-0.7.8_1.x86_64-musl.xbps`.
 
 Release notes document the source and packaging commits, target architecture, and CPU tuning. Checksum manifests and separate build-info files are not published as release assets. The package targets `x86_64-musl` and is optimized for Intel Skylake; it is not suitable for older x86_64 CPUs. When changing packaged output without an upstream version change, increment `revision` in `srcpkgs/velotype/template`. The workflow rejects changed bytes under the same version and revision and refuses revision downgrades.
 
@@ -37,7 +41,7 @@ git clone https://github.com/Azuuuuure222/velotype.git
 git clone https://github.com/void-linux/void-packages.git
 cd velotype
 
-./scripts/prepare-source.sh ../void-packages/hostdir/sources/velotype-0.7.5
+./scripts/prepare-source.sh ../void-packages/hostdir/sources/velotype-0.7.8
 mkdir -p ../void-packages/srcpkgs/velotype
 cp -a srcpkgs/velotype/. ../void-packages/srcpkgs/velotype/
 
@@ -50,10 +54,10 @@ The generated package is placed under `void-packages/hostdir/binpkgs/`.
 
 ## musl compatibility
 
-Upstream's transitive `xattr 0.2.3` references `libc::ENOATTR`, which is unavailable on musl Linux. The build phase applies a narrow, context-checked `ENOATTR` → `ENODATA` substitution while `cargo auditable build` runs, then restores the cached source on success or failure. The install phase copies the already-built auditable release executable instead of running `cargo install` and recompiling the full Rust dependency graph; this avoids a second expensive release/LTO compile and reduces build time, memory pressure, and disk I/O. If an interrupted build left the shared registry patched, the build recovers the pristine file from Cargo's cached crate archive before applying the patch. The workflow runs `scripts/test-xattr-patch.sh` before the full build, covering patch restoration, feature checks, build failures, and binary-install behavior without compiling the application.
+The v0.7.8 lockfile no longer includes the previous `xattr 0.2.3` dependency, so the old `ENOATTR` → `ENODATA` workaround has been removed rather than carrying a stale Cargo registry patch. The build fetches locked dependencies, checks the resolved Cargo feature graph for Wayland and rejects X11 features/crates, then runs `cargo auditable build`. The install phase copies the already-built auditable release executable instead of compiling the dependency graph again via `cargo install`. The workflow's `scripts/test-wayland-patch.sh` tests the idempotent manifest patch, feature-graph rejection, build flags, error propagation, and binary-install behavior without compiling the application.
 
 ## CI and reproducibility
 
-GitHub Actions builds the actual `.xbps` package through `xbps-src` and uploads it as a workflow artifact. CI caches the pinned source archive, Cargo registry and Void binary packages, plus cacheable Rust compiler results through `sccache`; the compiler cache is capped at 2 GiB and persisted between runs to reduce repeated compilation. The source cache key includes both the upstream commit and its expected SHA-256; source archives are validated against that checksum on every run, and the checksum is never silently regenerated. The workflow checks shell syntax and the musl patch lifecycle before bootstrapping Void and compiling the application.
+GitHub Actions builds the actual `.xbps` package through `xbps-src` and uploads it as a workflow artifact. CI caches the pinned source archive, Cargo registry and Void binary packages, plus cacheable Rust compiler results through `sccache`; the compiler cache is capped at 2 GiB and persisted between runs to reduce repeated compilation. The source cache key includes both the upstream commit and its expected SHA-256; source archives are validated against that checksum on every run, and the checksum is never silently regenerated. The workflow checks shell syntax, the Wayland-only feature patch, and the pinned source checksum before bootstrapping Void and compiling the application.
 
-When updating Velotype, review the upstream source commit and archive checksum, then build with `./xbps-src -A x86_64-musl pkg velotype` before merging.
+When updating Velotype, verify the upstream source commit and archive checksum, run the validation tests, and confirm the actual package build with `./xbps-src -A x86_64-musl pkg velotype` succeeds before publishing.

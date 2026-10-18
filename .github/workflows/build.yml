@@ -125,9 +125,9 @@ jobs:
           bash -n srcpkgs/velotype/template
           bash -n scripts/prepare-source.sh
           bash -n scripts/publish-release.sh
-          bash -n scripts/test-xattr-patch.sh
+          bash -n scripts/test-wayland-patch.sh
           bash -n scripts/test-publish-release.sh
-          bash scripts/test-xattr-patch.sh
+          bash scripts/test-wayland-patch.sh
           bash scripts/test-publish-release.sh
           ./scripts/prepare-source.sh "void-packages/hostdir/sources/velotype-${{ steps.source.outputs.version }}"
           mkdir -p void-packages/srcpkgs/velotype
