@@ -140,6 +140,7 @@ _velotype_calculate_cargo_jobs() {
 }
 
 _velotype_set_build_env() {
+	local visible_cpus memory_limit_kib
 	# Keep target tuning applied if install recompiles in a separate phase.
 	case " ${CFLAGS:-}" in
 		*" -O2 -march=skylake") ;;
@@ -173,10 +174,10 @@ _velotype_set_build_env() {
 			return 1
 			;;
 	esac
-	printf 'velotype: Cargo parallelism: %s jobs; visible CPUs: %s; memory limit: %s MiB\\n' \
-		"$CARGO_BUILD_JOBS" \
-		"$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || printf 'unknown')" \
-		"$((_velotype_available_memory_kib / 1024))" >&2
+	visible_cpus="$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || printf 'unknown')"
+	memory_limit_kib="$(_velotype_available_memory_kib)"
+	printf 'velotype: Cargo parallelism: %s jobs; visible CPUs: %s; memory limit: %s MiB\n' \
+		"$CARGO_BUILD_JOBS" "$visible_cpus" "$((memory_limit_kib / 1024))" >&2
 }
 
 do_build() {
