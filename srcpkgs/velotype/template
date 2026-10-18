@@ -1,8 +1,8 @@
 # Template file for 'velotype'
 pkgname=velotype
-version=0.7.5
-revision=3
-_commit=a61c71955c6104fc5d647088b5957da6d59149ca
+version=0.7.8
+revision=1
+_commit=07a24a9b5b953539dede8e61a1f7d9d0adbba590
 wrksrc="${pkgname}-${_commit}"
 build_style=cargo
 make_check=no
@@ -16,7 +16,7 @@ maintainer="Azuuuuure222"
 license="Apache-2.0"
 homepage="https://github.com/manyougz/velotype"
 distfiles="${homepage}/archive/${_commit}.tar.gz"
-checksum=a65a9f6dfc6697650b8368e9be925a8f218cfb52e1246d32f9a95f1de5a2f84a
+checksum=75c190c578b8dda567a6eca8ed0ad1568cd714b7f90d1966e98b2141608a5d48
 
 # Tuned specifically for the target Intel Core i3-6100U (Skylake).
 # Do not distribute this binary to pre-Skylake x86_64 systems.
@@ -25,263 +25,55 @@ case "$XBPS_TARGET_MACHINE" in
 	*) broken="only supported on x86_64-musl / Intel Skylake" ;;
 esac
 
-# GPUI defaults to both Wayland and X11. Disable default features explicitly
-# so this binary has only the Wayland window backend.
+# Velotype 0.7.8 uses gpui-pre-platform 0.3.9. Its upstream dependency
+# enables both X11 and Wayland. Disable defaults and select Wayland explicitly.
 post_patch() {
-	local manifest default_gpui wayland_gpui default_count wayland_count
+	local manifest default_platform wayland_platform default_count wayland_count
 	manifest="${wrksrc}/Cargo.toml"
-	default_gpui='gpui = { version = "0.2", features = ["runtime_shaders"] }'
-	wayland_gpui='gpui = { version = "0.2", default-features = false, features = ["font-kit", "runtime_shaders", "wayland"] }'
+	default_platform='gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }'
+	wayland_platform='gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", default-features = false, features = ["font-kit", "wayland", "runtime_shaders"] }'
 
 	if [ ! -f "$manifest" ]; then
 		echo "velotype: missing upstream Cargo.toml: $manifest" >&2
 		return 1
 	fi
 
-	default_count="$(grep -Fc "$default_gpui" "$manifest" || true)"
-	wayland_count="$(grep -Fc "$wayland_gpui" "$manifest" || true)"
+	default_count="$(grep -Fc "$default_platform" "$manifest" || true)"
+	wayland_count="$(grep -Fc "$wayland_platform" "$manifest" || true)"
 	if [ "$default_count" -eq 1 ] && [ "$wayland_count" -eq 0 ]; then
-		if ! sed -i 's|^gpui = .*runtime_shaders.*$|gpui = { version = "0.2", default-features = false, features = ["font-kit", "runtime_shaders", "wayland"] }|' "$manifest"; then
-			echo "velotype: could not set GPUI to Wayland-only features" >&2
+		if ! sed -i 's|^gpui_platform = .*features = \["font-kit", "x11", "wayland", "runtime_shaders"\].*$|gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", default-features = false, features = ["font-kit", "wayland", "runtime_shaders"] }|' "$manifest"; then
+			echo "velotype: could not set GPUI platform to Wayland-only features" >&2
 			return 1
 		fi
 	elif [ "$default_count" -eq 0 ] && [ "$wayland_count" -eq 1 ]; then
-		# Idempotent on re-entry, e.g. a local developer reruns the patch step.
+		# Idempotent if the package patch step is re-entered.
 		:
 	else
-		echo "velotype: Cargo.toml GPUI dependency differs from the reviewed upstream context" >&2
+		echo "velotype: Cargo.toml GPUI platform dependency differs from the reviewed upstream context" >&2
 		return 1
 	fi
 
-	if ! grep -Fq "$wayland_gpui" "$manifest"; then
-		echo "velotype: Wayland-only GPUI manifest patch did not persist" >&2
+	if ! grep -Fxq "$wayland_platform" "$manifest"; then
+		echo "velotype: Wayland-only GPUI platform manifest patch did not persist" >&2
 		return 1
 	fi
 }
 
-# GPUI's default Linux features enable X11 alongside Wayland, and xattr 0.2.3
-# references libc::ENOATTR, unavailable on musl. Keep the patched Cargo cache
-# limited to each build/install command and restore both dependency manifests.
-_velotype_gpui_x11_count() {
-	awk '
-		/\.dependencies\.xkbcommon\]/ { in_section=1; sections++; next }
-		/^\[/ { in_section=0 }
-		in_section && /"x11"/ { count++ }
-		END { if (sections != 1) exit 2; print count+0 }
-	' "$1"
-}
-
-_velotype_gpui_wayland_count() {
-	awk '
-		/\.dependencies\.xkbcommon\]/ { in_section=1; sections++; next }
-		/^\[/ { in_section=0 }
-		in_section && /"wayland"/ { count++ }
-		END { if (sections != 1) exit 2; print count+0 }
-	' "$1"
-}
-
-_velotype_gpui_default_false_count() {
-	awk '
-		/\.dependencies\.xkbcommon\]/ { in_section=1; sections++; next }
-		/^\[/ { in_section=0 }
-		in_section && /default-features = false/ { count++ }
-		END { if (sections != 1) exit 2; print count+0 }
-	' "$1"
-}
-
-# Patch only the local copy under wrksrc. Never mutate Cargo's shared registry
-# source: Cargo resolves registry features from index metadata, not this file.
-_velotype_rewrite_gpui_wayland_manifest() {
-	local manifest tmp_manifest x11_count wayland_count default_count
-	manifest="$1"
-	tmp_manifest="${manifest}.velotype-tmp"
-	if ! awk '
-		/\.dependencies\.xkbcommon\]/ { in_section=1; sections++; print; next }
-		/^\[/ { in_section=0 }
-		in_section && /"x11",/ { next }
-		in_section && /^default-features = false$/ { default_count++ }
-		in_section && /^optional = true$/ {
-			if (default_count == 0) print "default-features = false"
-			optional_count++
-		}
-		{ print }
-		END { if (sections != 1 || optional_count != 1) exit 2 }
-	' "$manifest" > "$tmp_manifest"; then
-		rm -f -- "$tmp_manifest"
-		echo "velotype: failed to rewrite GPUI xkbcommon features in the reviewed manifest context" >&2
-		return 1
-	fi
-
-	x11_count="$(_velotype_gpui_x11_count "$tmp_manifest")" || x11_count=99
-	wayland_count="$(_velotype_gpui_wayland_count "$tmp_manifest")" || wayland_count=0
-	default_count="$(_velotype_gpui_default_false_count "$tmp_manifest")" || default_count=99
-	if [ "$x11_count" -ne 0 ] || [ "$wayland_count" -lt 1 ] || [ "$default_count" -ne 1 ]; then
-		rm -f -- "$tmp_manifest"
-		echo "velotype: GPUI Wayland-only manifest rewrite failed validation" >&2
-		return 1
-	fi
-	if ! mv -f "$tmp_manifest" "$manifest"; then
-		rm -f -- "$tmp_manifest"
-		return 1
-	fi
-}
-
-_velotype_restore_xattr_patch() {
-	if [ -z "${_velotype_xattr_src:-}" ] && [ -z "${_velotype_xattr_backup:-}" ]; then
-		return 0
-	fi
-	if [ -z "${_velotype_xattr_src:-}" ] || [ -z "${_velotype_xattr_backup:-}" ]; then
-		echo "velotype: inconsistent xattr patch restoration state" >&2
-		return 1
-	fi
-
-	if [ ! -f "${_velotype_xattr_backup}/mod.rs" ]; then
-		echo "velotype: xattr restoration backup is missing at ${_velotype_xattr_backup}" >&2
-		return 1
-	fi
-	if ! cp -f "${_velotype_xattr_backup}/mod.rs" "${_velotype_xattr_src}/src/sys/mod.rs"; then
-		echo "velotype: failed to restore cached xattr source; backup retained at ${_velotype_xattr_backup}" >&2
-		return 1
-	fi
-	if ! rm -rf -- "${_velotype_xattr_backup}"; then
-		echo "velotype: failed to remove xattr backup ${_velotype_xattr_backup}" >&2
-		return 1
-	fi
-	_velotype_xattr_src=
-	_velotype_xattr_backup=
-}
-
-_velotype_gpui_version() {
-	awk '
-		/^\[\[package\]\]/ { in_gpui=0 }
-		/^name = "gpui"$/ { in_gpui=1; next }
-		in_gpui && /^version = "/ { gsub(/"/, "", $3); print $3; exit }
-	' "$1"
-}
-
-_velotype_add_gpui_path_override() {
-	local manifest patch_line
-	manifest="$1"
-	patch_line='gpui = { path = ".cargo-patches/gpui" }'
-	if grep -Fxq "$patch_line" "$manifest"; then
-		return 0
-	fi
-	if grep -Eq '^\[patch\.crates-io\][[:space:]]*$' "$manifest"; then
-		echo "velotype: found an unexpected existing [patch.crates-io] section; refusing to overwrite it" >&2
-		return 1
-	fi
-	if grep -Eq '^\[patch\.' "$manifest"; then
-		echo "velotype: existing Cargo patch sections need manual review before adding the GPUI override" >&2
-		return 1
-	fi
-	printf '\n[patch.crates-io]\n%s\n' "$patch_line" >> "$manifest" || return $?
-	grep -Fxq "$patch_line" "$manifest"
-}
-
-_velotype_prepare_gpui_wayland_patch() {
-	local cargo_home app_manifest lockfile gpui_path gpui_manifest gpui_version gpui_src
-	local x11_count wayland_count default_count lock_identity
-	cargo_home="${CARGO_HOME:-/host/cargo}"
-	app_manifest="${wrksrc}/Cargo.toml"
-	lockfile="${wrksrc}/Cargo.lock"
-	gpui_path="${wrksrc}/.cargo-patches/gpui"
-	gpui_manifest="${gpui_path}/Cargo.toml"
-
-	if [ ! -f "$lockfile" ] || [ ! -f "$app_manifest" ]; then
-		echo "velotype: Cargo.toml or Cargo.lock is missing from $wrksrc" >&2
-		return 1
-	fi
-	gpui_version="$(_velotype_gpui_version "$lockfile")"
-	if [ -z "$gpui_version" ]; then
-		echo "velotype: unable to determine the locked GPUI version" >&2
-		return 1
-	fi
-
-	if [ ! -f "$gpui_manifest" ]; then
-		gpui_src="$(find "$cargo_home/registry/src" -mindepth 2 -maxdepth 2 \
-			-type d -name "gpui-${gpui_version}" -print -quit 2>/dev/null || true)"
-		if [ -z "$gpui_src" ]; then
-			echo "velotype: missing fetched GPUI source gpui-${gpui_version}" >&2
-			return 1
-		fi
-		# Remove an interrupted, incomplete copy; the registry source stays intact.
-		rm -rf -- "$gpui_path"
-		mkdir -p "${wrksrc}/.cargo-patches" || return $?
-		if ! cp -a "$gpui_src" "$gpui_path"; then
-			echo "velotype: failed to copy GPUI into the local patch directory" >&2
-			rm -rf -- "$gpui_path"
-			return 1
-		fi
-	fi
-
-	if ! grep -Fxq 'name = "gpui"' "$gpui_manifest" ||
-	   ! grep -Fxq "version = \"${gpui_version}\"" "$gpui_manifest"; then
-		echo "velotype: local GPUI manifest identity does not match Cargo.lock" >&2
-		return 1
-	fi
-	x11_count="$(_velotype_gpui_x11_count "$gpui_manifest")" || {
-		echo "velotype: GPUI xkbcommon dependency table differs from the reviewed manifest context" >&2
-		return 1
-	}
-	wayland_count="$(_velotype_gpui_wayland_count "$gpui_manifest")" || return 1
-	default_count="$(_velotype_gpui_default_false_count "$gpui_manifest")" || return 1
-	if [ "$wayland_count" -lt 1 ]; then
-		echo "velotype: GPUI xkbcommon dependency does not enable Wayland" >&2
-		return 1
-	fi
-	if [ "$x11_count" -gt 0 ] || [ "$default_count" -eq 0 ]; then
-		_velotype_rewrite_gpui_wayland_manifest "$gpui_manifest" || return $?
-	elif [ "$default_count" -ne 1 ]; then
-		echo "velotype: unexpected count of xkbcommon default-feature declarations" >&2
-		return 1
-	fi
-
-	_velotype_add_gpui_path_override "$app_manifest" || return $?
-
-	# Cargo must update the lockfile for the registry -> local path replacement.
-	# Updating only gpui keeps unrelated locked dependency versions unchanged.
-	if ! cargo update --offline --manifest-path "$app_manifest" -p "gpui@${gpui_version}"; then
-		echo "velotype: Cargo could not lock the local Wayland-only GPUI source offline" >&2
-		return 1
-	fi
-
-	# A path package has neither a registry source URL nor registry checksum.
-	lock_identity="$(awk '
-		/^\[\[package\]\]/ { in_gpui=0; next }
-		/^name = "gpui"$/ { in_gpui=1; packages++; next }
-		in_gpui && /^source = / { source_count++ }
-		in_gpui && /^checksum = / { checksum_count++ }
-		END { printf "%d %d %d\n", packages, source_count, checksum_count }
-	' "$lockfile")"
-	set -- $lock_identity
-	if [ "${1:-0}" -ne 1 ] || [ "${2:-99}" -ne 0 ] || [ "${3:-99}" -ne 0 ]; then
-		echo "velotype: Cargo.lock does not identify GPUI as the expected local path package: $lock_identity" >&2
-		return 1
-	fi
-
-	if ! grep -Fq 'gpui feature "wayland"' < <(CARGO_TERM_COLOR=never cargo tree --locked --offline --manifest-path "$app_manifest" --target "$RUST_TARGET" -e normal,build,features); then
-		echo "velotype: local GPUI override did not activate Wayland" >&2
-		return 1
-	fi
-}
-
-# The Rust xcursor crate is valid under Wayland: wayland-cursor uses it to parse cursor themes.
-# Reject X11 backends and X11 transport crates, not XCursor image-format support.
 _velotype_assert_wayland_only() {
 	local tree_file
 	tree_file="$(mktemp "${wrksrc}/.cargo-tree-wayland.XXXXXX")"
-	if ! CARGO_TERM_COLOR=never cargo tree --locked --offline --manifest-path "${wrksrc}/Cargo.toml" --target "$RUST_TARGET" -e normal,build,features > "$tree_file"; then
+	if ! CARGO_TERM_COLOR=never cargo tree --locked --manifest-path "${wrksrc}/Cargo.toml" --target "$RUST_TARGET" -e normal,build,features > "$tree_file"; then
 		echo "velotype: unable to inspect the locked Cargo feature graph" >&2
 		rm -f -- "$tree_file"
 		return 1
 	fi
 
-	if ! grep -Fq 'gpui feature "wayland"' "$tree_file"; then
+	if ! grep -Fq 'gpui-pre-platform feature "wayland"' "$tree_file"; then
 		echo "velotype: GPUI Wayland feature is not active in the resolved dependency graph" >&2
 		rm -f -- "$tree_file"
 		return 1
 	fi
-	if grep -Fq 'gpui feature "x11"' "$tree_file" ||
+	if grep -Fq 'gpui-pre-platform feature "x11"' "$tree_file" ||
 	   grep -Fq 'xkbcommon feature "x11"' "$tree_file" ||
 	   grep -Eq '(^|[[:space:]])(as-raw-xcb-connection|x11|x11-clipboard|x11-dl|x11rb|x11rb-protocol|xcb|xim-ctext|xim-parser|zed-xim)([[:space:]]|$)' "$tree_file"; then
 		echo "velotype: X11 features or dependencies remain in the resolved Cargo graph" >&2
@@ -290,86 +82,6 @@ _velotype_assert_wayland_only() {
 		return 1
 	fi
 	rm -f -- "$tree_file"
-}
-
-_velotype_apply_xattr_patch() {
-	local cargo_home xattr_src gpui_path xattr_file enoattr_count crate_archive
-	[ "$XBPS_TARGET_LIBC" = "musl" ] || return 0
-
-	cargo_home="${CARGO_HOME:-/host/cargo}"
-	_velotype_xattr_src=
-	_velotype_xattr_backup=
-	_velotype_restore_required=0
-
-	xattr_src="$(find "$cargo_home/registry/src" -mindepth 2 -maxdepth 2 \
-		-type d -name 'xattr-0.2.3' -print -quit 2>/dev/null || true)"
-	gpui_path="${wrksrc}/.cargo-patches/gpui"
-	if [ -z "$xattr_src" ] || [ ! -f "$gpui_path/Cargo.toml" ]; then
-		# The crate source is fetched before the local path override is created.
-		cargo fetch --locked --manifest-path "${wrksrc}/Cargo.toml" --target "$RUST_TARGET" || return $?
-		xattr_src="$(find "$cargo_home/registry/src" -mindepth 2 -maxdepth 2 \
-			-type d -name 'xattr-0.2.3' -print -quit 2>/dev/null || true)"
-	fi
-	if [ -z "$xattr_src" ]; then
-		echo "velotype: expected fetched xattr-0.2.3 source under $cargo_home/registry/src" >&2
-		return 1
-	fi
-
-	xattr_file="${xattr_src}/src/sys/mod.rs"
-	if grep -Fq '::libc::ENOATTR' "$xattr_file"; then
-		enoattr_count="$(grep -Fc '::libc::ENOATTR' "$xattr_file")"
-		if [ "$enoattr_count" -ne 1 ]; then
-			echo "velotype: expected one ENOATTR reference in xattr-0.2.3, found $enoattr_count" >&2
-			return 1
-		fi
-		_velotype_xattr_backup="$(mktemp -d "${wrksrc}/.xattr-musl.XXXXXX")"
-		if ! cp -f "$xattr_file" "${_velotype_xattr_backup}/mod.rs"; then
-			rm -rf -- "$_velotype_xattr_backup"
-			_velotype_xattr_backup=
-			return 1
-		fi
-		_velotype_xattr_src="$xattr_src"
-		elif grep -Fq '::libc::ENODATA' "$xattr_file"; then
-		crate_archive="$(find "$cargo_home/registry/cache" -mindepth 2 -maxdepth 2 \
-			-type f -name 'xattr-0.2.3.crate' -print -quit 2>/dev/null || true)"
-		if [ -z "$crate_archive" ]; then
-			echo "velotype: xattr source is already patched, but its pristine crate archive is missing" >&2
-			return 1
-		fi
-		_velotype_xattr_backup="$(mktemp -d "${wrksrc}/.xattr-musl.XXXXXX")"
-		if ! tar -xOf "$crate_archive" xattr-0.2.3/src/sys/mod.rs > "${_velotype_xattr_backup}/mod.rs" ||
-		   ! grep -Fq '::libc::ENOATTR' "${_velotype_xattr_backup}/mod.rs"; then
-			echo "velotype: cached xattr crate did not contain the pristine ENOATTR source" >&2
-			rm -rf -- "$_velotype_xattr_backup"
-			_velotype_xattr_backup=
-			return 1
-		fi
-		_velotype_xattr_src="$xattr_src"
-		_velotype_restore_required=1
-	else
-		echo "velotype: xattr-0.2.3 source does not match the expected musl patch context" >&2
-		return 1
-	fi
-
-	trap _velotype_restore_xattr_patch EXIT
-	if ! sed -i 's/::libc::ENOATTR/::libc::ENODATA/' "$xattr_file"; then
-		if _velotype_restore_xattr_patch; then trap - EXIT; fi
-		return 1
-	fi
-	if grep -Fq '::libc::ENOATTR' "$xattr_file" || ! grep -Fq '::libc::ENODATA' "$xattr_file"; then
-		echo "velotype: xattr musl patch verification failed" >&2
-		if _velotype_restore_xattr_patch; then trap - EXIT; fi
-		return 1
-	fi
-
-	_velotype_prepare_gpui_wayland_patch || {
-		if _velotype_restore_xattr_patch; then trap - EXIT; fi
-		return 1
-	}
-	_velotype_assert_wayland_only || {
-		if _velotype_restore_xattr_patch; then trap - EXIT; fi
-		return 1
-	}
 }
 
 _velotype_set_build_env() {
@@ -387,11 +99,10 @@ _velotype_set_build_env() {
 		*) export RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=skylake" ;;
 	esac
 	# Favor CPU throughput in the interactive editor on the Skylake target.
-	# Upstream sets opt-level = "s"; Cargo's profile env override switches the
-	# Rust release build to opt-level 3 while retaining full LTO, one codegen
-	# unit, panic=abort, and symbol stripping from the pinned upstream profile.
+	# Upstream's size-focused release profile is overridden to opt-level 3;
+	# full LTO, one codegen unit, panic=abort, and symbol stripping remain.
 	export CARGO_PROFILE_RELEASE_OPT_LEVEL=3
-	# Cache supported rustc invocations across CI runs; keep cache data in hostdir/cargo.
+	# Cache supported rustc invocations across CI runs.
 	export RUSTC_WRAPPER=sccache
 	export SCCACHE_DIR="${CARGO_HOME:-/host/cargo}/sccache"
 	export SCCACHE_CACHE_SIZE=2G
@@ -404,31 +115,22 @@ do_build() {
 
 	_velotype_set_build_env
 
-	_velotype_xattr_src=
-	_velotype_xattr_backup=
-	_velotype_apply_xattr_patch || return $?
+	# v0.7.8 no longer locks the previous xattr 0.2.3 dependency, so no
+	# Cargo-registry source mutation is needed for musl compatibility.
+	cargo fetch --locked --manifest-path "${wrksrc}/Cargo.toml" --target "${RUST_TARGET}" || return $?
+	_velotype_assert_wayland_only || return $?
 
 	if ${make_cmd} build ${XBPS_VERBOSE+${make_verbose}} --release --locked --target "${RUST_TARGET}" \
 		${configure_args} ${make_build_args}; then
-		if _velotype_restore_xattr_patch; then
-			trap - EXIT
-		else
-			return 1
-		fi
+		return 0
 	else
 		build_status=$?
-		if _velotype_restore_xattr_patch; then
-			trap - EXIT
-		else
-			return 1
-		fi
 		return "$build_status"
 	fi
 }
 
-# Reuse the auditable release binary from do_build. Cargo install compiles the
-# dependency graph again in a separate target directory, needlessly repeating
-# release LTO and disk I/O on low-memory devices.
+# Reuse the auditable release binary from do_build instead of recompiling via
+# cargo install in a separate target directory.
 do_install() {
 	local binary destination
 	binary="${wrksrc}/target/${RUST_TARGET}/release/velotype"
