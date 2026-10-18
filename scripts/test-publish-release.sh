@@ -10,7 +10,7 @@ mkdir -p "$fake_bin" "$state/assets" "$dist"
 log="$tmp/gh.log"
 touch "$log"
 export GH_STATE="$state" GH_LOG="$log"
-export VERSION=0.7.5
+export VERSION=0.7.8
 export UPSTREAM_COMMIT=a61c71955c6104fc5d647088b5957da6d59149ca
 export RELEASE_COMMIT=1111111111111111111111111111111111111111
 export GH_REPO=test/velotype GH_TOKEN=test-token
